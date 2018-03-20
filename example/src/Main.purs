@@ -1,11 +1,15 @@
 module Main where
 
 import Prelude
+import Data.Maybe (Maybe (..))
+import Data.Tuple (Tuple (..))
 import Data.Argonaut (class EncodeJson, class DecodeJson, encodeJson, decodeJson, fail)
+import Data.URI (Authority (..), Host (..), Port (..))
 import Control.Monad.Eff (Eff)
+import Control.Monad.Eff.Ref (newRef, readRef, modifyRef)
 import Control.Monad.Eff.Console (CONSOLE, log)
 
-import Sparrow.Client (Client)
+import Sparrow.Client (Topic (..), Client, allocateDependencies, unpackClient)
 
 
 data InitIn = InitIn
@@ -32,25 +36,32 @@ instance decodeJsonDeltaOut :: DecodeJson DeltaOut where
     s <- decodeJson json
     if s == "DeltaOut" then pure DeltaOut else fail "Not an DeltaOut"
 
-
-client :: Client eff (Eff eff) InitIn InitOut DeltaIn DeltaOut
+client :: Client _ (Eff _) InitIn InitOut DeltaIn DeltaOut
 client call = do
   log "Calling..."
+  count <- newRef 0
   call
     { initIn: InitIn
-    , receive: \{sendCurrent,initOut,unsubscribe} DeltaOut ->
-      log "Received DeltaOut..."
+    , receive: \{sendCurrent,initOut,unsubscribe} DeltaOut -> do
+        log "Received DeltaOut..."
+        modifyRef count (\x -> x + 1)
+        c <- readRef count
+        when (c >= 10) unsubscribe
     , onReject:
-      log "Rejected..."
+        log "Rejected..."
     }
-    ( \mReturn -> case mReturn of
-         Nothing -> log "Failed..."
-         Just {sendCurrent,initOut: InitOut,unsubscribe} -> do
-           log "Success InitOut"
-           sendCurrent DeltaIn
+    ( \mReturn -> do
+        case mReturn of
+          Nothing -> log "Failed..."
+          Just {sendCurrent,initOut: InitOut,unsubscribe} -> do
+            log "Success InitOut"
+            sendCurrent DeltaIn
+        pure Nothing
     )
 
 
-main :: forall e. Eff (console :: CONSOLE | e) Unit
+main :: Eff _ Unit
 main = do
-  log "Hello sailor!"
+  allocateDependencies false (Authority Nothing [Tuple (NameAddress "localhost") (Just $ Port 3000)]) $ do
+    -- set timeout?
+    unpackClient (Topic ["foo"]) client

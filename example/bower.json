@@ -13,5 +13,8 @@
   },
   "devDependencies": {
     "purescript-psci-support": "^3.0.0"
+  },
+  "resolutions": {
+    "purescript-uuid": "2e563284ee5c41d75bf9010de3c4cded9f0223db"
   }
 }
