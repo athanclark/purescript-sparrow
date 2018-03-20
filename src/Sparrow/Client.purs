@@ -1,6 +1,6 @@
 module Sparrow.Client where
 
-import Sparrow.Client.Types (SparrowClientT, ask', removeSubscription, registerSubscription, callReject, callOnReceive, Env)
+import Sparrow.Client.Types (SparrowClientT, runSparrowClientT, ask', removeSubscription, registerSubscription, callReject, callOnReceive, Env)
 import Sparrow.Types (Topic (..), Client, ClientReturn, ClientArgs, WSIncoming (..), WSOutgoing (..), WithTopic (..), WithSessionID (..))
 import Sparrow.Session (SessionID (..))
 import Sparrow.Ping (PingPong (..))
@@ -19,9 +19,12 @@ import Data.Typelevel.Undefined (undefined)
 import Data.Path.Pathy ((</>), rootDir, dir, file)
 import Data.Argonaut (Json, class EncodeJson, class DecodeJson, decodeJson, encodeJson, jsonParser)
 import Data.UUID (GENUUID, genUUID)
+import Data.Set (Set)
+import Data.Set as Set
 import Control.Monad.Aff (Fiber, runAff_, killFiber)
 import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Ref (REF, newRef, readRef, writeRef)
+import Control.Monad.Eff.Class (liftEff)
+import Control.Monad.Eff.Ref (REF, Ref, newRef, readRef, writeRef, modifyRef)
 import Control.Monad.Eff.Exception (EXCEPTION, Error, throw, throwException, error)
 import Control.Monad.Eff.Timer (TIMER, setInterval, clearInterval, setTimeout)
 import Control.Monad.Base (class MonadBase, liftBase)
@@ -29,6 +32,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Control (class MonadBaseControl)
 import Network.HTTP.Affjax (AJAX, post)
 import Network.HTTP.StatusCode (StatusCode (..))
+import Queue (READ, WRITE)
 import Queue.One as One
 import IxQueue (IxQueue)
 import IxQueue as Ix
@@ -69,7 +73,7 @@ unpackClient topic client = do
                   Nothing -> do
                     mThread <- runM (onOpen Nothing)
                     writeRef threadVar mThread
-                  Just x -> case decodeJson x of
+                  Just json -> case decodeJson json of
                     Left e -> throw e
                     Right (initOut :: initOut) -> do
                       let unsubscribe :: m Unit
@@ -127,7 +131,7 @@ allocateDependencies :: forall m stM a eff
                      => Boolean -- TLS
                      -> Authority -- Hostname
                      -> SparrowClientT (Effects' eff) m a
-                     -> m Unit
+                     -> m a
 allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
   let httpURI :: Topic -> URI
       httpURI (Topic topic) = URI (Just $ Scheme $ if tls then "https" else "http")
@@ -141,18 +145,22 @@ allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
 
   sessionID <- SessionID <$> genUUID
 
-  ( toWS :: One.Queue _ _ (WSIncoming (WithTopic Json))
+  ( toWS :: One.Queue (read :: READ, write :: WRITE) (Effects' eff) (WSIncoming (WithTopic Json))
     ) <- One.newQueue
-  ( rejectQueue :: IxQueue _ _ Unit
+  ( rejectQueue :: IxQueue (read :: READ, write :: WRITE) (Effects' eff) Unit
     ) <- Ix.newIxQueue
-  ( receiveQueue :: IxQueue _ _ Json
+  ( receiveQueue :: IxQueue (read :: READ, write :: WRITE) (Effects' eff) Json
     ) <- Ix.newIxQueue
+  ( pendingTopicsAdded :: Ref (Set Topic)
+    ) <- newRef Set.empty
+  ( pendingTopicsRemoved :: Ref (Set Topic)
+    ) <- newRef Set.empty
 
 
   let env :: Env (Effects' eff) m
       env =
         { sendInitIn: \topic initIn -> do
-            -- TODO pending topics added
+            liftEff (modifyRef pendingTopicsAdded (Set.insert topic))
             {status,response} <- post (URI.print $ httpURI topic) $ encodeJson $ WithSessionID
               { sessionID
               , content: initIn
@@ -162,7 +170,11 @@ allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
               StatusCode code
                 | code == 200 -> pure (Just response)
                 | otherwise -> pure Nothing
-        , sendDeltaIn: liftBase <<< One.putQueue toWS
+        , sendDeltaIn: \x -> do
+            case x of
+              WSUnsubscribe sub -> liftBase (modifyRef pendingTopicsRemoved (Set.insert sub))
+              _ -> pure unit
+            liftBase (One.putQueue toWS x)
         , rejectQueue
         , receiveQueue
         }
@@ -197,16 +209,24 @@ allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
                           send $ show $ encodeJson (PingPong Nothing :: PingPong Unit)
                         writeRef pingingThread (Just thread)
                         One.onQueue toWS (send <<< show <<< encodeJson <<< PingPong <<< Just)
-                    , onmessage: \{send,close} r -> case jsonParser r >>= decodeJson of
+                    , onmessage: \{send} r -> case jsonParser r >>= decodeJson of
                         Left e -> throw e
                         Right x -> case x of
                           PingPong Nothing -> pure unit
-                          PingPong (Just x) -> case x of
+                          PingPong (Just y) -> case y of
                             WSTopicsSubscribed subs -> pure unit -- FIXME
-                            WSTopicAdded sub -> pure unit -- FIXME
-                            WSTopicRemoved sub -> pure unit
-                            WSTopicRejected sub -> pure unit
-                            WSDecodingError e -> pure unit
+                            WSTopicAdded sub -> do
+                              pending <- Set.member sub <$> readRef pendingTopicsAdded
+                              if pending
+                                 then modifyRef pendingTopicsAdded (Set.delete sub)
+                                 else throw $ "Unexpected topic added: " <> show sub
+                            WSTopicRemoved sub -> do
+                              pending <- Set.member sub <$> readRef pendingTopicsRemoved
+                              if pending
+                                 then modifyRef pendingTopicsRemoved (Set.delete sub)
+                                 else throw $ "Unexpected topic removed: " <> show sub
+                            WSTopicRejected sub -> runM (callReject env sub)
+                            WSDecodingError e -> throw e
                             WSOutgoing (WithTopic {topic,content}) -> runM (callOnReceive env topic content)
                     , onclose: \{code,reason,wasClean} -> close
                     , onerror: \e -> close
@@ -215,4 +235,6 @@ allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
 
     case mB of
       Nothing -> call
-      Just ms -> void $ setTimeout ms call
+      Just ms -> void (setTimeout ms call)
+
+  runM (runSparrowClientT env client)
