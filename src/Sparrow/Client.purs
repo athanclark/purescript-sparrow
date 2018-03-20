@@ -1,7 +1,14 @@
-module Sparrow.Client where
+module Sparrow.Client
+  ( module Types
+  , unpackClient
+  , allocateDependencies
+  , Effects
+  , Effects'
+  ) where
 
 import Sparrow.Client.Types (SparrowClientT, runSparrowClientT, ask', removeSubscription, registerSubscription, callReject, callOnReceive, Env)
 import Sparrow.Types (Topic (..), Client, ClientReturn, ClientArgs, WSIncoming (..), WSOutgoing (..), WithTopic (..), WithSessionID (..))
+import Sparrow.Types (Topic (..), Client, ClientReturn, ClientArgs) as Types
 import Sparrow.Session (SessionID (..))
 import Sparrow.Ping (PingPong (..))
 
