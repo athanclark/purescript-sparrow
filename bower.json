@@ -1,0 +1,29 @@
+{
+  "name": "purescript-sparrow",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "output"
+  ],
+  "dependencies": {
+    "purescript-prelude": "^3.1.1",
+    "purescript-console": "^3.0.0",
+    "purescript-argonaut": "^3.1.0",
+    "purescript-string-parsers": "^3.1.0",
+    "purescript-uuid": "git://github.com/athanclark/purescript-uuid.git#2e563284ee5c41d75bf9010de3c4cded9f0223db",
+    "purescript-affjax": "^5.0.0",
+    "purescript-monad-control": "^4.1.0",
+    "purescript-queue": "^4.0.2",
+    "purescript-uri": "^4.2.4",
+    "purescript-typelevel": "^3.0.0",
+    "purescript-js-timers": "^3.0.0",
+    "purescript-websocket-moderate": "^2.0.1"
+  },
+  "devDependencies": {
+    "purescript-psci-support": "^3.0.0"
+  },
+  "resolutions": {
+    "purescript-uuid": "2e563284ee5c41d75bf9010de3c4cded9f0223db"
+  }
+}
