@@ -3,7 +3,7 @@ module Sparrow.Types where
 import Sparrow.Session (SessionID)
 
 import Prelude
-import Data.Maybe (Maybe)
+import Data.Maybe (Maybe (..))
 import Data.Either (Either (..))
 import Data.Argonaut (class DecodeJson, class EncodeJson, decodeJson, encodeJson, fail, (.?), (:=), (~>), jsonEmptyObject)
 import Data.Generic (class Generic, gEq, gShow, gCompare)
@@ -34,6 +34,25 @@ type Client eff m initIn initOut deltaIn deltaOut =
     -> (Maybe (ClientReturn m initOut deltaIn) -> m (Maybe (Fiber eff Unit))) -- for Eff compatability
     -> m Unit
     ) -> m Unit
+
+staticClient :: forall eff m initIn initOut
+              . Monad m
+             => ((initIn -> (Maybe initOut -> m Unit) -> m Unit) -> m Unit) -- ^ Invoke
+             -> Client eff m initIn initOut JSONVoid JSONVoid
+staticClient f invoke = f \initIn onInitOut -> invoke
+  { receive: \_ _ -> pure unit
+  , initIn
+  , onReject: pure unit
+  }
+  ( \mReturn -> do
+       case mReturn of
+         Nothing -> onInitOut Nothing
+         Just {initOut,unsubscribe} -> do
+           unsubscribe
+           onInitOut (Just initOut)
+       pure Nothing
+  )
+
 
 -- * Topic
 
@@ -67,6 +86,15 @@ instance encodeJsonTopic :: EncodeJson Topic where
 
 
 -- * HTTP
+
+data JSONVoid
+
+instance encodeJsonJSONVoid :: EncodeJson JSONVoid where
+  encodeJson _ = encodeJson ""
+
+instance decodeJsonJSONVoid :: DecodeJson JSONVoid where
+  decodeJson _ = fail "JSONVoid"
+
 
 newtype WithSessionID a = WithSessionID
   { sessionID :: SessionID
