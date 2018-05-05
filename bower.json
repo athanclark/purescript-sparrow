@@ -20,7 +20,7 @@
     "purescript-uuid": "git://github.com/athanclark/purescript-uuid.git#2e563284ee5c41d75bf9010de3c4cded9f0223db",
     "purescript-affjax": "^5.0.0",
     "purescript-monad-control": "^4.1.0",
-    "purescript-queue": "^4.0.2",
+    "purescript-queue": "^5.0.0",
     "purescript-uri": "^4.2.4",
     "purescript-typelevel": "^3.0.0",
     "purescript-js-timers": "^3.0.0",
