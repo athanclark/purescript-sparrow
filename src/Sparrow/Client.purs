@@ -31,6 +31,7 @@ import Data.Set as Set
 import Control.Monad.Aff (Fiber, runAff_, killFiber)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Class (liftEff)
+import Control.Monad.Eff.Console (CONSOLE, warn)
 import Control.Monad.Eff.Ref (REF, Ref, newRef, readRef, writeRef, modifyRef)
 import Control.Monad.Eff.Exception (EXCEPTION, Error, throw, throwException, error)
 import Control.Monad.Eff.Timer (TIMER, setInterval, clearInterval, setTimeout)
@@ -128,6 +129,7 @@ type Effects' eff =
   , timer :: TIMER
   , ws :: WEBSOCKET
   , uuid :: GENUUID
+  , console :: CONSOLE
   | eff)
 
 
@@ -226,12 +228,12 @@ allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
                               pending <- Set.member sub <$> readRef pendingTopicsAdded
                               if pending
                                  then modifyRef pendingTopicsAdded (Set.delete sub)
-                                 else throw $ "Unexpected topic added: " <> show sub
+                                 else warn $ "Unexpected topic added: " <> show sub
                             WSTopicRemoved sub -> do
                               pending <- Set.member sub <$> readRef pendingTopicsRemoved
                               if pending
                                  then modifyRef pendingTopicsRemoved (Set.delete sub)
-                                 else throw $ "Unexpected topic removed: " <> show sub
+                                 else warn $ "Unexpected topic removed: " <> show sub
                             WSTopicRejected sub -> runM (callReject env sub)
                             WSDecodingError e -> throw e
                             WSOutgoing (WithTopic {topic,content}) -> runM (callOnReceive env topic content)
