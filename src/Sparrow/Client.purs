@@ -88,6 +88,7 @@ unpackClient topic client = do
                           unsubscribe = do
                             sendDeltaIn (WSUnsubscribe topic)
                             removeSubscription env topic
+
                           sendCurrent :: deltaIn -> m Unit
                           sendCurrent = \x ->
                             sendDeltaIn $ WSIncoming $ WithTopic {topic,content: encodeJson x}
@@ -141,7 +142,7 @@ allocateDependencies :: forall m stM a eff
                      -> Authority -- Hostname
                      -> SparrowClientT (Effects' eff) m a
                      -> m a
-allocateDependencies tls auth client = liftBaseWith_ $ \runM -> do
+allocateDependencies tls auth client = liftBaseWith_ \runM -> do
   let httpURI :: Topic -> URI
       httpURI (Topic topic) = URI (Just $ Scheme $ if tls then "https" else "http")
                                   (HierarchicalPart (Just auth) $ Just $ Right $ case Array.unsnoc topic of
