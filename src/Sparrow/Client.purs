@@ -31,7 +31,7 @@ import Data.Set as Set
 import Control.Monad.Aff (Fiber, runAff_, killFiber)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Class (liftEff)
-import Control.Monad.Eff.Console (CONSOLE, warn)
+import Control.Monad.Eff.Console (CONSOLE, warn, log)
 import Control.Monad.Eff.Ref (REF, Ref, newRef, readRef, writeRef, modifyRef)
 import Control.Monad.Eff.Exception (EXCEPTION, Error, throw, throwException, error)
 import Control.Monad.Eff.Timer (TIMER, setInterval, clearInterval, setTimeout)
@@ -144,14 +144,15 @@ allocateDependencies :: forall m stM a eff
                      -> m a
 allocateDependencies tls auth client = liftBaseWith_ \runM -> do
   let httpURI :: Topic -> URI
-      httpURI (Topic topic) = URI (Just $ Scheme $ if tls then "https" else "http")
-                                  (HierarchicalPart (Just auth) $ Just $ Right $ case Array.unsnoc topic of
-                                      Nothing -> undefined -- throw
-                                      Just {init,last} ->
-                                        let pre = Array.foldl (\acc x -> acc </> dir x) (rootDir </> dir "dependencies") init
-                                        in  pre </> file last
-                                  )
-                                  Nothing Nothing
+      httpURI (Topic topic) =
+        URI (Just $ Scheme $ if tls then "https" else "http")
+            (HierarchicalPart (Just auth) $ Just $ Right $ case Array.unsnoc topic of
+                Nothing -> undefined -- throw
+                Just {init,last} ->
+                  let pre = Array.foldl (\acc x -> acc </> dir x) (rootDir </> dir "dependencies") init
+                  in  pre </> file last
+            )
+            Nothing Nothing
 
   sessionID <- SessionID <$> genUUID
 
@@ -238,8 +239,12 @@ allocateDependencies tls auth client = liftBaseWith_ \runM -> do
                             WSTopicRejected sub -> runM (callReject env sub)
                             WSDecodingError e -> throw e
                             WSOutgoing (WithTopic {topic,content}) -> runM (callOnReceive env topic content)
-                    , onclose: \{code,reason,wasClean} -> close
-                    , onerror: \e -> close
+                    , onclose: \{code,reason,wasClean} -> do
+                        log $ "Closing sparrow socket: " <> show code <> ", reason: " <> show reason <> ", was clean: " <> show wasClean
+                        close
+                    , onerror: \e -> do
+                        warn $ "Sparrow socket error: " <> show e
+                        close
                     }
                   }
 

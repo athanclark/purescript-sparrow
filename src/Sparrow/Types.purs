@@ -56,7 +56,6 @@ staticClient f invoke = f \initIn onInitOut -> invoke
 
 
 
-
 -- * Topic
 
 newtype Topic = Topic (Array String)
