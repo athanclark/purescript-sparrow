@@ -6,6 +6,7 @@ import Prelude
 import Data.Maybe (Maybe (..))
 import Data.Either (Either (..))
 import Data.Argonaut (class DecodeJson, class EncodeJson, decodeJson, encodeJson, fail, (.?), (:=), (~>), jsonEmptyObject)
+import Data.Argonaut.JSONVoid (JSONVoid)
 import Data.Generic (class Generic, gEq, gShow, gCompare)
 import Data.List as List
 import Data.String (joinWith)
@@ -88,14 +89,6 @@ instance encodeJsonTopic :: EncodeJson Topic where
 
 
 -- * HTTP
-
-data JSONVoid
-
-instance encodeJsonJSONVoid :: EncodeJson JSONVoid where
-  encodeJson _ = encodeJson ""
-
-instance decodeJsonJSONVoid :: DecodeJson JSONVoid where
-  decodeJson _ = fail "JSONVoid"
 
 
 newtype WithSessionID a = WithSessionID
