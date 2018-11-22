@@ -6,9 +6,8 @@ import Prelude
 import Data.Argonaut (Json)
 import Data.Maybe (Maybe)
 import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
-import Control.Monad.Aff (Aff)
-import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Ref (REF)
+import Effect (Effect)
+import Effect.Aff (Aff)
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Base (class MonadBase, liftBase)
 import Control.Monad.Trans.Class (class MonadTrans)
@@ -21,76 +20,76 @@ import IxQueue as Ix
 
 -- * Types
 
-type Env eff m =
-  { sendInitIn   :: Topic -> Json -> Aff eff (Maybe Json)
-  , receiveQueue :: Ix.IxQueue (read :: READ, write :: WRITE) eff Json
-  , rejectQueue :: Ix.IxQueue (read :: READ, write :: WRITE) eff Unit
+type Env m =
+  { sendInitIn   :: Topic -> Json -> Aff (Maybe Json)
+  , receiveQueue :: Ix.IxQueue (read :: READ, write :: WRITE) Json
+  , rejectQueue :: Ix.IxQueue (read :: READ, write :: WRITE) Unit
   , sendDeltaIn :: WSIncoming (WithTopic Json) -> m Unit
   }
 
 
-newtype SparrowClientT eff m a = SparrowClientT (ReaderT (Env eff m) m a)
+newtype SparrowClientT m a = SparrowClientT (ReaderT (Env m) m a)
 
-runSparrowClientT :: forall eff m a. Env eff m -> SparrowClientT eff m a -> m a
+runSparrowClientT :: forall m a. Env m -> SparrowClientT m a -> m a
 runSparrowClientT env (SparrowClientT (ReaderT f)) = f env
 
 
-instance functorSparrowClientT :: Functor m => Functor (SparrowClientT eff m) where
+instance functorSparrowClientT :: Functor m => Functor (SparrowClientT m) where
   map f (SparrowClientT (ReaderT g)) = SparrowClientT (ReaderT \r -> map f (g r))
 
-instance applySparrowClientT :: Apply m => Apply (SparrowClientT eff m) where
+instance applySparrowClientT :: Apply m => Apply (SparrowClientT m) where
   apply (SparrowClientT (ReaderT f)) (SparrowClientT (ReaderT g)) = SparrowClientT (ReaderT \r -> apply (f r) (g r))
 
-instance applicativeSparrowClientT :: Applicative m => Applicative (SparrowClientT eff m) where
+instance applicativeSparrowClientT :: Applicative m => Applicative (SparrowClientT m) where
   pure x = SparrowClientT (ReaderT \_ -> pure x)
 
-instance bindSparrowClientT :: Bind m => Bind (SparrowClientT eff m) where
+instance bindSparrowClientT :: Bind m => Bind (SparrowClientT m) where
   bind (SparrowClientT (ReaderT g)) f = SparrowClientT $ ReaderT \r ->
     bind (g r) (runSparrowClientT r <<< f)
 
-instance monadSparrowClientT :: Monad m => Monad (SparrowClientT eff m)
+instance monadSparrowClientT :: Monad m => Monad (SparrowClientT m)
 
-instance monadTransSparrowClientT :: MonadTrans (SparrowClientT eff) where
+instance monadTransSparrowClientT :: MonadTrans SparrowClientT where
   lift x = SparrowClientT (ReaderT \_ -> x)
 
 
-ask' :: forall eff m. Applicative m => SparrowClientT eff m (Env eff m)
+ask' :: forall m. Applicative m => SparrowClientT m (Env m)
 ask' = SparrowClientT $ ReaderT \r -> pure r
 
 
 
 -- * Functions
 
-registerSubscription :: forall m stM eff
-                      . MonadBaseControl (Eff (ref :: REF | eff)) m stM
+registerSubscription :: forall m stM
+                      . MonadBaseControl Effect m stM
                      => SingletonFunctor stM
-                     => Env (ref :: REF | eff) m
+                     => Env m
                      -> Topic -- ^ Subscription topic
                      -> (Json -> m Unit) -- ^ onDeltaOut
                      -> m Unit -- ^ onReject
                      -> m Unit
 registerSubscription {rejectQueue,receiveQueue} topic onDeltaOut onReject = liftBaseWith_ \runM -> do
-  Ix.onIxQueue receiveQueue (show topic) (runM <<< onDeltaOut)
-  Ix.onceIxQueue rejectQueue (show topic) \_ -> do
-    void $ Ix.delIxQueue receiveQueue (show topic)
+  Ix.on receiveQueue (show topic) (runM <<< onDeltaOut)
+  Ix.once rejectQueue (show topic) \_ -> do
+    void $ Ix.del receiveQueue (show topic)
     runM onReject
 
-removeSubscription :: forall m eff
-                    . MonadBase (Eff (ref :: REF | eff)) m
-                   => Env (ref :: REF | eff) m -> Topic -> m Unit
+removeSubscription :: forall m
+                    . MonadBase Effect m
+                   => Env m -> Topic -> m Unit
 removeSubscription {rejectQueue,receiveQueue} topic = liftBase $ do
-  void $ Ix.delIxQueue rejectQueue (show topic)
-  void $ Ix.delIxQueue receiveQueue (show topic)
+  void $ Ix.del rejectQueue (show topic)
+  void $ Ix.del receiveQueue (show topic)
 
-callReject :: forall m eff
-            . MonadBase (Eff (ref :: REF | eff)) m
-           => Env (ref :: REF | eff) m -> Topic -> m Unit
+callReject :: forall m
+            . MonadBase Effect m
+           => Env m -> Topic -> m Unit
 callReject {rejectQueue} topic =
-  liftBase (Ix.putIxQueue rejectQueue (show topic) unit)
+  liftBase (Ix.put rejectQueue (show topic) unit)
 
-callOnReceive :: forall m eff
-               . MonadBase (Eff (ref :: REF | eff)) m
-              => Env (ref :: REF | eff) m -> Topic -> Json -> m Unit
+callOnReceive :: forall m
+               . MonadBase Effect m
+              => Env m -> Topic -> Json -> m Unit
 callOnReceive {receiveQueue} topic v =
-  liftBase (Ix.putIxQueue receiveQueue (show topic) v)
+  liftBase (Ix.put receiveQueue (show topic) v)
 

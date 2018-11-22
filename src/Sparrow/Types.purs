@@ -7,14 +7,21 @@ import Data.Maybe (Maybe (..))
 import Data.Either (Either (..))
 import Data.Argonaut (class DecodeJson, class EncodeJson, decodeJson, encodeJson, fail, (.?), (:=), (~>), jsonEmptyObject)
 import Data.Argonaut.JSONVoid (JSONVoid)
-import Data.Generic (class Generic, gEq, gShow, gCompare)
+import Data.Generic.Rep (class Generic)
+import Data.Generic.Rep.Eq (genericEq)
+import Data.Generic.Rep.Ord (genericCompare)
+import Data.Generic.Rep.Show (genericShow)
 import Data.List as List
 import Data.String (joinWith)
+import Data.Array.NonEmpty (NonEmptyArray)
+import Data.Array.NonEmpty as ArrayNE
+import URI.Path (Path (..))
+import URI.Path.Segment as Segment
 import Control.Alternative ((<|>))
-import Control.Monad.Aff (Fiber)
+import Effect.Aff (Fiber)
 import Text.Parsing.StringParser (Parser, runParser)
 import Text.Parsing.StringParser.Combinators (sepBy)
-import Text.Parsing.StringParser.String (regex, char)
+import Text.Parsing.StringParser.CodePoints (regex, char)
 
 
 
@@ -30,16 +37,16 @@ type ClientArgs m initIn initOut deltaIn deltaOut =
   , onReject :: m Unit -- ^ From a delta rejection, not init one
   }
 
-type Client eff m initIn initOut deltaIn deltaOut =
+type Client m initIn initOut deltaIn deltaOut =
   ( ClientArgs m initIn initOut deltaIn deltaOut
-    -> (Maybe (ClientReturn m initOut deltaIn) -> m (Maybe (Fiber eff Unit))) -- for Eff compatability
+    -> (Maybe (ClientReturn m initOut deltaIn) -> m (Maybe (Fiber Unit))) -- for Eff compatability
     -> m Unit
     ) -> m Unit
 
-staticClient :: forall eff m initIn initOut
+staticClient :: forall m initIn initOut
               . Monad m
              => ((initIn -> (Maybe initOut -> m Unit) -> m Unit) -> m Unit) -- ^ Invoke
-             -> Client eff m initIn initOut JSONVoid JSONVoid
+             -> Client m initIn initOut JSONVoid JSONVoid
 staticClient f invoke = f \initIn onInitOut -> invoke
   { receive: \_ _ -> pure unit
   , initIn
@@ -59,18 +66,23 @@ staticClient f invoke = f \initIn onInitOut -> invoke
 
 -- * Topic
 
-newtype Topic = Topic (Array String)
+newtype Topic = Topic (NonEmptyArray String)
 
-derive instance genericTopic :: Generic Topic
+topicToPath :: Topic -> Path
+topicToPath (Topic xs) = Path
+  ([ Segment.unsafeSegmentFromString "dependencies"
+   ] <> (Segment.unsafeSegmentFromString <$> ArrayNE.toArray xs))
+
+derive instance genericTopic :: Generic Topic _
 
 instance showTopic :: Show Topic where
-  show = gShow
+  show = genericShow
 
 instance eqTopic :: Eq Topic where
-  eq = gEq
+  eq = genericEq
 
 instance ordTopic :: Ord Topic where
-  compare = gCompare
+  compare = genericCompare
 
 
 instance decodeJsonTopic :: DecodeJson Topic where
@@ -78,13 +90,15 @@ instance decodeJsonTopic :: DecodeJson Topic where
     s <- decodeJson json
     case runParser breaker s of
       Left e -> fail e
-      Right x -> pure (Topic x)
+      Right x -> case ArrayNE.fromArray x of
+        Nothing -> fail "empty topic set"
+        Just x' -> pure (Topic x')
     where
       breaker :: Parser (Array String)
       breaker = List.toUnfoldable <$> regex "[^\\/]*" `sepBy` char '/'
 
 instance encodeJsonTopic :: EncodeJson Topic where
-  encodeJson (Topic t) = encodeJson (joinWith "/" t)
+  encodeJson (Topic t) = encodeJson $ joinWith "/" $ ArrayNE.toArray t
 
 
 
@@ -96,13 +110,13 @@ newtype WithSessionID a = WithSessionID
   , content   :: a
   }
 
-derive instance genericWithSessionID :: Generic a => Generic (WithSessionID a)
+derive instance genericWithSessionID :: Generic a b => Generic (WithSessionID a) _
 
-instance eqWithSessionID :: (Eq a, Generic a) => Eq (WithSessionID a) where
-  eq = gEq
+instance eqWithSessionID :: (Eq a, Generic a b) => Eq (WithSessionID a) where
+  eq = genericEq
 
-instance showWithSessionID :: (Show a, Generic a) => Show (WithSessionID a) where
-  show = gShow
+instance showWithSessionID :: (Show a, Generic a b) => Show (WithSessionID a) where
+  show = genericShow
 
 instance encodeJsonWithSessionID :: EncodeJson a => EncodeJson (WithSessionID a) where
   encodeJson (WithSessionID {sessionID,content})
@@ -124,13 +138,13 @@ data InitResponse a
   | InitRejected
   | InitResponse a
 
-derive instance genericInitResponse :: Generic a => Generic (InitResponse a)
+derive instance genericInitResponse :: Generic a b => Generic (InitResponse a) _
 
-instance eqInitResponse :: (Eq a, Generic a) => Eq (InitResponse a) where
-  eq = gEq
+instance eqInitResponse :: (Eq a, Generic a b) => Eq (InitResponse a) where
+  eq = genericEq
 
-instance showInitResponse :: (Show a, Generic a) => Show (InitResponse a) where
-  show = gShow
+instance showInitResponse :: (Show a, Generic a b) => Show (InitResponse a) where
+  show = genericShow
 
 instance encodeJsonInitResponse :: EncodeJson a => EncodeJson (InitResponse a) where
   encodeJson x = case x of
@@ -165,13 +179,13 @@ newtype WithTopic a = WithTopic
   }
 
 
-derive instance genericWithTopic :: Generic a => Generic (WithTopic a)
+derive instance genericWithTopic :: Generic a b => Generic (WithTopic a) _
 
-instance eqWithTopic :: (Eq a, Generic a) => Eq (WithTopic a) where
-  eq = gEq
+instance eqWithTopic :: (Eq a, Generic a b) => Eq (WithTopic a) where
+  eq = genericEq
 
-instance showWithTopic :: (Show a, Generic a) => Show (WithTopic a) where
-  show = gShow
+instance showWithTopic :: (Show a, Generic a b) => Show (WithTopic a) where
+  show = genericShow
 
 instance encodeJsonWithTopic :: EncodeJson a => EncodeJson (WithTopic a) where
   encodeJson (WithTopic {topic,content})
@@ -192,13 +206,13 @@ instance decodeJsonWithTopic :: DecodeJson a => DecodeJson (WithTopic a) where
 data WSHTTPResponse
   = NoSessionID
 
-derive instance genericWSHTTPResponse :: Generic WSHTTPResponse
+derive instance genericWSHTTPResponse :: Generic WSHTTPResponse _
 
 instance eqWSHTTPResponse :: Eq WSHTTPResponse where
-  eq = gEq
+  eq = genericEq
 
 instance showWSHTTPResponse :: Show WSHTTPResponse where
-  show = gShow
+  show = genericShow
 
 instance decodeJsonWSHTTPResponse :: DecodeJson WSHTTPResponse where
   decodeJson json = do
@@ -214,13 +228,13 @@ data WSIncoming a
   = WSUnsubscribe Topic
   | WSIncoming a
 
-derive instance genericWSIncoming :: Generic a => Generic (WSIncoming a)
+derive instance genericWSIncoming :: Generic a b => Generic (WSIncoming a) _
 
-instance eqWSIncoming :: (Eq a, Generic a) => Eq (WSIncoming a) where
-  eq = gEq
+instance eqWSIncoming :: (Eq a, Generic a b) => Eq (WSIncoming a) where
+  eq = genericEq
 
-instance showWSIncoming :: (Show a, Generic a) => Show (WSIncoming a) where
-  show = gShow
+instance showWSIncoming :: (Show a, Generic a b) => Show (WSIncoming a) where
+  show = genericShow
 
 instance encodeJsonWSIncoming :: EncodeJson a => EncodeJson (WSIncoming a) where
   encodeJson x = case x of
@@ -242,13 +256,13 @@ data WSOutgoing a
   | WSDecodingError String
   | WSOutgoing a
 
-derive instance genericWSOutgoing :: Generic a => Generic (WSOutgoing a)
+derive instance genericWSOutgoing :: Generic a b => Generic (WSOutgoing a) _
 
-instance eqWSOutgoing :: (Eq a, Generic a) => Eq (WSOutgoing a) where
-  eq = gEq
+instance eqWSOutgoing :: (Eq a, Generic a b) => Eq (WSOutgoing a) where
+  eq = genericEq
 
-instance showWSOutgoing :: (Show a, Generic a) => Show (WSOutgoing a) where
-  show = gShow
+instance showWSOutgoing :: (Show a, Generic a b) => Show (WSOutgoing a) where
+  show = genericShow
 
 instance encodeJsonWSOutgoing :: EncodeJson a => EncodeJson (WSOutgoing a) where
   encodeJson x = case x of

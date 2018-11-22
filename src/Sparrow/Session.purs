@@ -6,12 +6,12 @@ import Prelude
 import Data.UUID (UUID, parseUUID)
 import Data.Maybe (Maybe (..))
 import Data.Argonaut (class DecodeJson, class EncodeJson, decodeJson, encodeJson, fail)
-import Data.Generic (class Generic)
+import Data.Generic.Rep (class Generic)
 
 
 newtype SessionID = SessionID UUID
 
-derive instance genericSessionID :: Generic SessionID
+derive instance genericSessionID :: Generic SessionID _
 
 instance eqSessionID :: Eq SessionID where
   eq (SessionID x) (SessionID y) = x `eq` y
