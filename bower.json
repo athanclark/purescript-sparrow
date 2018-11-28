@@ -9,7 +9,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://git.localcooking.com/tooling/purescript-sparrow.git"
+    "url": "git://github.com/athanclark/purescript-sparrow.git"
   },
   "license": "BSD-3-Clause",
   "dependencies": {
