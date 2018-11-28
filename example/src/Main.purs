@@ -5,12 +5,15 @@ import Data.These (These (Both))
 import Data.Maybe (Maybe (..))
 import Data.Tuple (Tuple (..))
 import Data.Argonaut (class EncodeJson, class DecodeJson, encodeJson, decodeJson, fail)
+import Data.String.NonEmpty as StringNE
+import Data.String.Yarn (fromString)
 import URI (Authority (..), Host (NameAddress))
 import URI.Port as Port
 import URI.Host.RegName as RegName
-import Effect (Eff)
+import Effect (Effect)
 import Effect.Ref as Ref
 import Effect.Console (log)
+import Partial.Unsafe (unsafePartial)
 
 import Sparrow.Client (Topic (..), Client, allocateDependencies, unpackClient)
 
@@ -39,7 +42,7 @@ instance decodeJsonDeltaOut :: DecodeJson DeltaOut where
     s <- decodeJson json
     if s == "DeltaOut" then pure DeltaOut else fail "Not an DeltaOut"
 
-client :: Client Effect InitIn InitOut DeltaIn DeltaOut
+client :: Client InitIn InitOut DeltaIn DeltaOut
 client call = do
   log "Calling..."
   count <- Ref.new 0
@@ -47,7 +50,7 @@ client call = do
     { initIn: InitIn
     , receive: \{sendCurrent,initOut,unsubscribe} DeltaOut -> do
         log "Received DeltaOut..."
-        c <- Ref.modify count (\x -> x + 1)
+        c <- Ref.modify (\x -> x + 1) count
         when (c >= 10) unsubscribe
     , onReject:
         log "Rejected..."
@@ -64,7 +67,8 @@ client call = do
 
 main :: Effect Unit
 main = do
-  env <- allocateDependencies false $ Authority Nothing $
-    Both (NameAddress (RegName.unsafeFromString"localhost")) (Port.unsafeFromInt 3000)
+  env <- allocateDependencies false $ Authority Nothing $ Just $
+    Both (NameAddress $ unsafePartial $ RegName.unsafeFromString $ StringNE.unsafeFromString "localhost")
+         (Port.unsafeFromInt 3000)
     -- set timeout?
-  unpackClient env (Topic ["foo"]) client
+  unpackClient env (fromString "foo") client

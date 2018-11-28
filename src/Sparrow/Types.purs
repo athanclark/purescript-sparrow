@@ -18,6 +18,9 @@ import Data.Generic.Rep.Ord (genericCompare)
 import Data.Generic.Rep.Show (genericShow)
 import Data.List as List
 import Data.String (joinWith)
+import Data.String.NonEmpty (NonEmptyString)
+import Data.String.NonEmpty as StringNE
+import Data.String.Yarn (class IsString)
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as ArrayNE
 import URI.Path (Path (..))
@@ -28,6 +31,7 @@ import Effect.Aff (Fiber)
 import Text.Parsing.StringParser (Parser, runParser)
 import Text.Parsing.StringParser.Combinators (sepBy)
 import Text.Parsing.StringParser.CodePoints (regex, char)
+import Partial.Unsafe (unsafePartial)
 
 
 
@@ -71,17 +75,17 @@ staticClient f invoke = f \initIn onInitOut -> invoke
 
 -- * Topic
 
-newtype Topic = Topic (NonEmptyArray String)
+newtype Topic = Topic (NonEmptyArray NonEmptyString)
 
 topicToPath :: Topic -> Path
 topicToPath (Topic xs) = Path
   ([ Segment.unsafeSegmentFromString "dependencies"
-   ] <> (Segment.unsafeSegmentFromString <$> ArrayNE.toArray xs))
+   ] <> (Segment.unsafeSegmentFromString <<< StringNE.toString <$> ArrayNE.toArray xs))
 
 derive instance genericTopic :: Generic Topic _
 
 instance showTopic :: Show Topic where
-  show (Topic t) = joinWith "/" (ArrayNE.toArray t)
+  show (Topic t) = joinWith "/" (StringNE.toString <$> ArrayNE.toArray t)
 
 instance eqTopic :: Eq Topic where
   eq = genericEq
@@ -97,7 +101,7 @@ instance decodeJsonTopic :: DecodeJson Topic where
       Left e -> fail e
       Right x -> case ArrayNE.fromArray x of
         Nothing -> fail "empty topic set"
-        Just x' -> pure (Topic x')
+        Just x' -> pure $ unsafePartial $ Topic $ StringNE.unsafeFromString <$> x'
     where
       breaker :: Parser (Array String)
       breaker = List.toUnfoldable <$> regex "[^\\/]*" `sepBy` char '/'
@@ -105,6 +109,14 @@ instance decodeJsonTopic :: DecodeJson Topic where
 instance encodeJsonTopic :: EncodeJson Topic where
   encodeJson t = encodeJson (show t)
 
+instance isStringTopic :: IsString Topic where
+  fromString s = unsafePartial $
+    case runParser breaker s of
+      Right x -> case ArrayNE.fromArray x of
+        Just x' -> Topic $ StringNE.unsafeFromString <$> x'
+    where
+      breaker :: Parser (Array String)
+      breaker = List.toUnfoldable <$> regex "[^\\/]*" `sepBy` char '/'
 
 
 -- * HTTP
