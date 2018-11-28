@@ -19,13 +19,14 @@ import Data.Argonaut (Json, class EncodeJson, class DecodeJson, decodeJson, enco
 import Data.UUID (genUUID)
 import Data.Set (Set)
 import Data.Set as Set
-import URI (AbsoluteURI (..), Authority, HierarchicalPart (HierarchicalPartAuth), Query, Path (..), HierPath, UserInfo, Host)
+import URI (AbsoluteURI (..), Authority, HierarchicalPart (HierarchicalPartAuth), Query, Path (..), HierPath, UserInfo, Host, Port)
 import URI.Scheme (unsafeFromString) as Scheme
 import URI.AbsoluteURI (print) as AbsoluteURI
 import URI.Extra.QueryPairs (QueryPairs (..), Key, Value, keyFromString, valueFromString)
 import URI.Extra.QueryPairs (print) as QueryPairs
 import URI.Path.Segment (unsafeSegmentFromString) as Segment
-import URI.Host (print) as Host
+import URI.HostPortPair (HostPortPair)
+import URI.HostPortPair (print) as HostPortPair
 import Effect.Aff (Fiber, runAff_, killFiber)
 import Effect (Effect)
 import Effect.Class (liftEffect)
@@ -110,11 +111,11 @@ unpackClient env@{sendInitIn,sendDeltaIn} topic client = do
 
 
 
-allocateDependencies :: Boolean -- TLS
-                     -> Authority UserInfo Host -- Hostname
+allocateDependencies :: Boolean -- ^ TLS
+                     -> Authority UserInfo (HostPortPair Host Port) -- ^ Hostname
                      -> Effect Env
 allocateDependencies tls auth = do
-  let httpURI :: Topic -> AbsoluteURI UserInfo Host Path HierPath Query
+  let httpURI :: Topic -> AbsoluteURI UserInfo (HostPortPair Host Port) Path HierPath Query
       httpURI topic =
         AbsoluteURI
           (Scheme.unsafeFromString $ if tls then "https" else "http")
@@ -141,7 +142,7 @@ allocateDependencies tls auth = do
             _ <- liftEffect $ Ref.modify (Set.insert topic) pendingTopicsAdded
             let uriOpts =
                   { printUserInfo: identity
-                  , printHosts: Host.print
+                  , printHosts: HostPortPair.print identity identity
                   , printPath: identity
                   , printHierPath: identity
                   , printQuery: identity
@@ -187,14 +188,14 @@ allocateDependencies tls auth = do
 
         call :: Effect Unit
         call = newWebSocket
-                  { url:  let x :: AbsoluteURI UserInfo Host Path HierPath (QueryPairs Key Value)
+                  { url:  let x :: AbsoluteURI UserInfo (HostPortPair Host Port) Path HierPath (QueryPairs Key Value)
                               x = AbsoluteURI
                                     (Scheme.unsafeFromString $ if tls then "wss" else "ws")
                                     (HierarchicalPartAuth auth $ Path [Segment.unsafeSegmentFromString "dependencies"])
                                     (Just $ QueryPairs [Tuple (keyFromString "sessionID") $ Just $ valueFromString $ show sessionID])
                               uriOpts =
                                 { printUserInfo: identity
-                                , printHosts: Host.print
+                                , printHosts: HostPortPair.print identity identity
                                 , printPath: identity
                                 , printHierPath: identity
                                 , printQuery: QueryPairs.print identity identity

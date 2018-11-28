@@ -1,13 +1,16 @@
 module Main where
 
 import Prelude
+import Data.These (These (Both))
 import Data.Maybe (Maybe (..))
 import Data.Tuple (Tuple (..))
 import Data.Argonaut (class EncodeJson, class DecodeJson, encodeJson, decodeJson, fail)
-import Data.URI (Authority (..), Host (..), Port (..))
-import Control.Monad.Eff (Eff)
-import Control.Monad.Eff.Ref (newRef, readRef, modifyRef)
-import Control.Monad.Eff.Console (CONSOLE, log)
+import URI (Authority (..), Host (NameAddress))
+import URI.Port as Port
+import URI.Host.RegName as RegName
+import Effect (Eff)
+import Effect.Ref as Ref
+import Effect.Console (log)
 
 import Sparrow.Client (Topic (..), Client, allocateDependencies, unpackClient)
 
@@ -36,16 +39,15 @@ instance decodeJsonDeltaOut :: DecodeJson DeltaOut where
     s <- decodeJson json
     if s == "DeltaOut" then pure DeltaOut else fail "Not an DeltaOut"
 
-client :: Client _ (Eff _) InitIn InitOut DeltaIn DeltaOut
+client :: Client Effect InitIn InitOut DeltaIn DeltaOut
 client call = do
   log "Calling..."
-  count <- newRef 0
+  count <- Ref.new 0
   call
     { initIn: InitIn
     , receive: \{sendCurrent,initOut,unsubscribe} DeltaOut -> do
         log "Received DeltaOut..."
-        modifyRef count (\x -> x + 1)
-        c <- readRef count
+        c <- Ref.modify count (\x -> x + 1)
         when (c >= 10) unsubscribe
     , onReject:
         log "Rejected..."
@@ -60,8 +62,9 @@ client call = do
     )
 
 
-main :: Eff _ Unit
+main :: Effect Unit
 main = do
-  allocateDependencies false (Authority Nothing [Tuple (NameAddress "localhost") (Just $ Port 3000)]) $ do
+  env <- allocateDependencies false $ Authority Nothing $
+    Both (NameAddress (RegName.unsafeFromString"localhost")) (Port.unsafeFromInt 3000)
     -- set timeout?
-    unpackClient (Topic ["foo"]) client
+  unpackClient env (Topic ["foo"]) client
