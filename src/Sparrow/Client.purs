@@ -215,7 +215,7 @@ allocateDependencies tls auth = do
                         Left e -> throw e
                         Right x -> case x of
                           PingPong Nothing -> pure unit
-                          PingPong (Just y) -> case y of
+                          PingPong (Just y) -> case y of -- FIXME put pingPong in websockets-moderate?
                             WSTopicsSubscribed subs -> pure unit -- FIXME
                             WSTopicAdded sub -> do
                               pending <- Set.member sub <$> Ref.read pendingTopicsAdded
