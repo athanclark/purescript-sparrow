@@ -5,9 +5,12 @@ module Sparrow.Client
   ) where
 
 import Sparrow.Client.Types (removeSubscription, registerSubscription, callReject, callOnReceive, Env)
-import Sparrow.Types (Topic, Client, ClientReturn, ClientArgs, WSIncoming (..), WSOutgoing (..), WithTopic (..), WithSessionID (..), topicToPath)
-import Sparrow.Types (Topic (..), Client, ClientReturn, ClientArgs) as Types
-import Sparrow.Session (SessionID (..))
+import Sparrow.Types
+  ( Topic, topicToPath
+  , newSessionID
+  , Client, ClientReturn, ClientArgs
+  , WSIncoming (..), WSOutgoing (..), WithTopic (..), WithSessionID (..))
+import Sparrow.Types (Topic, Client, ClientReturn, ClientArgs) as Types
 import Sparrow.Ping (PingPong (..))
 
 import Prelude
@@ -16,7 +19,6 @@ import Data.Maybe (Maybe (..))
 import Data.Tuple (Tuple (..))
 import Data.Either (Either (..))
 import Data.Argonaut (Json, class EncodeJson, class DecodeJson, decodeJson, encodeJson, jsonParser, stringify)
-import Data.UUID (genUUID)
 import Data.Set (Set)
 import Data.Set as Set
 import URI (AbsoluteURI (..), Authority, HierarchicalPart (HierarchicalPartAuth), Query, Path (..), HierPath, UserInfo, Host, Port)
@@ -47,6 +49,7 @@ import WebSocket (newWebSocket)
 
 
 
+-- | Register an invoking client
 unpackClient :: forall initIn initOut deltaIn deltaOut
               . EncodeJson initIn
              => DecodeJson initOut
@@ -110,7 +113,7 @@ unpackClient env@{sendInitIn,sendDeltaIn} topic client = do
   client go
 
 
-
+-- | Set-up the sparrow connection for this client
 allocateDependencies :: Boolean -- ^ TLS
                      -> Authority UserInfo (HostPortPair Host Port) -- ^ Hostname
                      -> Effect Env
@@ -122,7 +125,7 @@ allocateDependencies tls auth = do
           (HierarchicalPartAuth auth (topicToPath topic))
           Nothing
 
-  sessionID <- SessionID <$> genUUID
+  sessionID <- newSessionID
 
   ( toWS :: One.Queue (read :: READ, write :: WRITE) (WSIncoming (WithTopic Json))
     ) <- One.new

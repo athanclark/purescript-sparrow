@@ -18,6 +18,7 @@ import IxQueue as Ix
 
 -- * Types
 
+-- | Represents the stored machinery necessary for a client connection to work with multiple topics
 type Env =
   { sendInitIn   :: Topic -> Json -> Aff (Maybe Json) -- ^ `initIn -> Maybe initOut`
   , receiveQueue :: Ix.IxQueue (read :: READ, write :: WRITE) Json -- ^ `<- deltaOut`
@@ -28,6 +29,7 @@ type Env =
 
 -- * Functions
 
+-- | Add a subscription to the machinery
 registerSubscription :: Env
                      -> Topic -- ^ Subscription topic
                      -> (Json -> Effect Unit) -- ^ onDeltaOut
@@ -38,16 +40,19 @@ registerSubscription {rejectQueue,receiveQueue} topic onDeltaOut onReject = do
   Ix.on receiveQueue topic' onDeltaOut
   Ix.once rejectQueue topic' \_ -> Ix.del receiveQueue topic' *> onReject
 
+-- | Remove a subscription from the machinery
 removeSubscription :: Env -> Topic -> Effect Unit
 removeSubscription {rejectQueue,receiveQueue} topic = do
   let topic' = show topic
   void $ Ix.del rejectQueue topic'
   void $ Ix.del receiveQueue topic'
 
+-- | Call the stored rejection mechanism
 callReject :: Env -> Topic -> Effect Unit
 callReject {rejectQueue} topic =
   Ix.put rejectQueue (show topic) unit
 
+-- | Call the stored onReceive mechanism
 callOnReceive :: Env -> Topic -> Json -> Effect Unit
 callOnReceive {receiveQueue} topic v =
   Ix.put receiveQueue (show topic) v
