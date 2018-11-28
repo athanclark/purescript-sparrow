@@ -4,7 +4,7 @@ module Sparrow.Client
   , allocateDependencies
   ) where
 
-import Sparrow.Client.Types (SparrowClientT, runSparrowClientT, ask', removeSubscription, registerSubscription, callReject, callOnReceive, Env)
+import Sparrow.Client.Types (removeSubscription, registerSubscription, callReject, callOnReceive, Env)
 import Sparrow.Types (Topic, Client, ClientReturn, ClientArgs, WSIncoming (..), WSOutgoing (..), WithTopic (..), WithSessionID (..), topicToPath)
 import Sparrow.Types (Topic (..), Client, ClientReturn, ClientArgs) as Types
 import Sparrow.Session (SessionID (..))
@@ -15,7 +15,6 @@ import Prelude
 import Data.Maybe (Maybe (..))
 import Data.Tuple (Tuple (..))
 import Data.Either (Either (..))
-import Data.Functor.Singleton (class SingletonFunctor, liftBaseWith_)
 import Data.Argonaut (Json, class EncodeJson, class DecodeJson, decodeJson, encodeJson, jsonParser, stringify)
 import Data.UUID (genUUID)
 import Data.Set (Set)
@@ -35,9 +34,6 @@ import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import Effect.Exception (Error, throw, throwException, error)
 import Effect.Timer (setInterval, clearInterval, setTimeout)
-import Control.Monad.Base (class MonadBase, liftBase)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Control (class MonadBaseControl)
 import Affjax (post, printResponseFormatError)
 import Affjax.RequestBody (RequestBody (Json))
 import Affjax.ResponseFormat (json)
@@ -50,86 +46,74 @@ import WebSocket (newWebSocket)
 
 
 
-unpackClient :: forall m stM initIn initOut deltaIn deltaOut
-              . MonadBaseControl Effect m stM
-             => SingletonFunctor stM
-             => EncodeJson initIn
+unpackClient :: forall initIn initOut deltaIn deltaOut
+              . EncodeJson initIn
              => DecodeJson initOut
              => EncodeJson deltaIn
              => DecodeJson deltaOut
-             => Topic
-             -> Client m initIn initOut deltaIn deltaOut
-             -> SparrowClientT m Unit
-unpackClient topic client = do
-  env@{sendInitIn,sendDeltaIn} <- ask'
+             => Env
+             -> Topic
+             -> Client initIn initOut deltaIn deltaOut
+             -> Effect Unit
+unpackClient env@{sendInitIn,sendDeltaIn} topic client = do
+  threadVar <- Ref.new Nothing
 
-  lift $ liftBaseWith_ \runM -> do
-    threadVar <- Ref.new Nothing
+  let go :: ClientArgs initIn initOut deltaIn deltaOut
+          -> (Maybe (ClientReturn initOut deltaIn) -> Effect (Maybe (Fiber Unit)))
+          -> Effect Unit
+      go {receive,initIn,onReject} onOpen = do
 
-    let go :: ClientArgs m initIn initOut deltaIn deltaOut
-           -> (Maybe (ClientReturn m initOut deltaIn) -> m (Maybe (Fiber Unit)))
-           -> m Unit
-        go {receive,initIn,onReject} onOpen = do
+        let continue :: Either Error (Maybe Json) -> Effect Unit
+            continue me = case me of
+              Left e -> throwException e
+              Right mx -> case mx of
+                Nothing -> do
+                  mThread <- onOpen Nothing
+                  Ref.write mThread threadVar
+                Just json -> case decodeJson json of
+                  Left e -> throw ("Json deserialization failed for initOut: " <> e)
+                  Right (initOut :: initOut) -> do
+                    let unsubscribe :: Effect Unit
+                        unsubscribe = do
+                          sendDeltaIn (WSUnsubscribe topic)
+                          removeSubscription env topic
 
-          let continue :: Either Error (Maybe Json) -> Effect Unit
-              continue me = case me of
-                Left e -> throwException e
-                Right mx -> case mx of
-                  Nothing -> do
-                    mThread <- runM (onOpen Nothing)
+                        sendCurrent :: deltaIn -> Effect Unit
+                        sendCurrent x =
+                          sendDeltaIn $ WSIncoming $ WithTopic {topic,content: encodeJson x}
+
+                        return :: ClientReturn initOut deltaIn
+                        return =
+                          { sendCurrent
+                          , unsubscribe
+                          , initOut
+                          }
+
+                        onDeltaOut :: Json -> Effect Unit
+                        onDeltaOut v = case decodeJson v of
+                          Left e -> throw e
+                          Right (deltaOut :: deltaOut) -> receive return deltaOut
+
+                    registerSubscription env topic onDeltaOut $ do
+                      onReject
+                      mThread <- Ref.read threadVar
+                      case mThread of
+                        Nothing -> pure unit
+                        Just thread -> runAff_ (\_ -> pure unit) (killFiber (error "Killing thread") thread)
+
+                    mThread <- onOpen (Just return)
                     Ref.write mThread threadVar
-                  Just json -> case decodeJson json of
-                    Left e -> throw e
-                    Right (initOut :: initOut) -> do
-                      let unsubscribe :: m Unit
-                          unsubscribe = do
-                            sendDeltaIn (WSUnsubscribe topic)
-                            removeSubscription env topic
 
-                          sendCurrent :: deltaIn -> m Unit
-                          sendCurrent = \x ->
-                            sendDeltaIn $ WSIncoming $ WithTopic {topic,content: encodeJson x}
+        runAff_ continue $ sendInitIn topic $ encodeJson initIn
 
-                          return :: ClientReturn m initOut deltaIn
-                          return =
-                            { sendCurrent
-                            , unsubscribe
-                            , initOut
-                            }
-
-                          onDeltaOut :: Json -> m Unit
-                          onDeltaOut v = case decodeJson v of
-                            Left e -> liftBase (throw e)
-                            Right (deltaOut :: deltaOut) -> receive return deltaOut
-
-                      mThread <- runM $ do
-                        registerSubscription env topic onDeltaOut $ do
-                          onReject
-                          liftBase $ do
-                            mThread <- Ref.read threadVar
-                            case mThread of
-                              Nothing -> pure unit
-                              Just thread -> runAff_ (\_ -> pure unit) (killFiber (error "Killing thread") thread)
-
-                        onOpen (Just return)
-
-                      Ref.write mThread threadVar
-
-          liftBase $ runAff_ continue $ sendInitIn topic $ encodeJson initIn
-
-    runM (client go)
+  client go
 
 
 
-allocateDependencies :: forall m stM a
-                      . MonadBase Effect m
-                     => MonadBaseControl Effect m stM
-                     => SingletonFunctor stM
-                     => Boolean -- TLS
+allocateDependencies :: Boolean -- TLS
                      -> Authority UserInfo Host -- Hostname
-                     -> SparrowClientT m a
-                     -> m a
-allocateDependencies tls auth client = liftBaseWith_ \runM -> do
+                     -> Effect Env
+allocateDependencies tls auth = do
   let httpURI :: Topic -> AbsoluteURI UserInfo Host Path HierPath Query
       httpURI topic =
         AbsoluteURI
@@ -151,7 +135,7 @@ allocateDependencies tls auth client = liftBaseWith_ \runM -> do
     ) <- Ref.new Set.empty
 
 
-  let env :: Env m
+  let env :: Env
       env =
         { sendInitIn: \topic initIn -> do
             _ <- liftEffect $ Ref.modify (Set.insert topic) pendingTopicsAdded
@@ -178,9 +162,9 @@ allocateDependencies tls auth client = liftBaseWith_ \runM -> do
                     in  Nothing <$ liftEffect (warn err)
         , sendDeltaIn: \x -> do
             case x of
-              WSUnsubscribe sub -> void $ liftBase $ Ref.modify (Set.insert sub) pendingTopicsRemoved
+              WSUnsubscribe sub -> void $ Ref.modify (Set.insert sub) pendingTopicsRemoved
               _ -> pure unit
-            liftBase (One.put toWS x)
+            One.put toWS x
         , rejectQueue
         , receiveQueue
         }
@@ -239,9 +223,9 @@ allocateDependencies tls auth client = liftBaseWith_ \runM -> do
                               if pending
                                  then void $ Ref.modify (Set.delete sub) pendingTopicsRemoved
                                  else warn $ "Unexpected topic removed: " <> show sub
-                            WSTopicRejected sub -> runM (callReject env sub)
+                            WSTopicRejected sub -> callReject env sub
                             WSDecodingError e -> throw e
-                            WSOutgoing (WithTopic {topic,content}) -> runM (callOnReceive env topic content)
+                            WSOutgoing (WithTopic {topic,content}) -> callOnReceive env topic content
                     , onclose: \{code,reason,wasClean} -> do
                         log $ "Closing sparrow socket: " <> show code <> ", reason: " <> show reason <> ", was clean: " <> show wasClean
                         close
@@ -255,4 +239,4 @@ allocateDependencies tls auth client = liftBaseWith_ \runM -> do
       Nothing -> call
       Just ms -> void (setTimeout ms call)
 
-  runM (runSparrowClientT env client)
+  pure env

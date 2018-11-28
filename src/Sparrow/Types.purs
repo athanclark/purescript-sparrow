@@ -1,3 +1,8 @@
+-- | This module defines the data types used by the protocol over the wire, and the definition of
+-- | a user-level "client" that can handle a fully specified `initIn`, `initOut`, `deltaIn` and `deltaOut`
+-- | transmission schema for a topic. Generally this module should be considered "internal".
+
+
 module Sparrow.Types where
 
 import Sparrow.Session (SessionID)
@@ -18,6 +23,7 @@ import Data.Array.NonEmpty as ArrayNE
 import URI.Path (Path (..))
 import URI.Path.Segment as Segment
 import Control.Alternative ((<|>))
+import Effect (Effect)
 import Effect.Aff (Fiber)
 import Text.Parsing.StringParser (Parser, runParser)
 import Text.Parsing.StringParser.Combinators (sepBy)
@@ -25,28 +31,27 @@ import Text.Parsing.StringParser.CodePoints (regex, char)
 
 
 
-type ClientReturn m initOut deltaIn =
-  { sendCurrent   :: deltaIn -> m Unit -- was vs. can't be successful?
+type ClientReturn initOut deltaIn =
+  { sendCurrent   :: deltaIn -> Effect Unit -- TODO was vs. can't be successful?
   , initOut       :: initOut
-  , unsubscribe   :: m Unit
+  , unsubscribe   :: Effect Unit
   }
 
-type ClientArgs m initIn initOut deltaIn deltaOut =
-  { receive  :: ClientReturn m initOut deltaIn -> deltaOut -> m Unit
+type ClientArgs initIn initOut deltaIn deltaOut =
+  { receive  :: ClientReturn initOut deltaIn -> deltaOut -> Effect Unit
   , initIn   :: initIn
-  , onReject :: m Unit -- ^ From a delta rejection, not init one
+  , onReject :: Effect Unit -- ^ From a delta rejection, not init one
   }
 
-type Client m initIn initOut deltaIn deltaOut =
-  ( ClientArgs m initIn initOut deltaIn deltaOut
-    -> (Maybe (ClientReturn m initOut deltaIn) -> m (Maybe (Fiber Unit))) -- for Eff compatability
-    -> m Unit
-    ) -> m Unit
+type Client initIn initOut deltaIn deltaOut =
+  ( ClientArgs initIn initOut deltaIn deltaOut
+    -> (Maybe (ClientReturn initOut deltaIn) -> Effect (Maybe (Fiber Unit))) -- for Eff compatability
+    -> Effect Unit
+    ) -> Effect Unit
 
-staticClient :: forall m initIn initOut
-              . Monad m
-             => ((initIn -> (Maybe initOut -> m Unit) -> m Unit) -> m Unit) -- ^ Invoke
-             -> Client m initIn initOut JSONVoid JSONVoid
+staticClient :: forall initIn initOut
+              . ((initIn -> (Maybe initOut -> Effect Unit) -> Effect Unit) -> Effect Unit) -- ^ Invoke
+             -> Client initIn initOut JSONVoid JSONVoid
 staticClient f invoke = f \initIn onInitOut -> invoke
   { receive: \_ _ -> pure unit
   , initIn
@@ -76,7 +81,7 @@ topicToPath (Topic xs) = Path
 derive instance genericTopic :: Generic Topic _
 
 instance showTopic :: Show Topic where
-  show = genericShow
+  show (Topic t) = joinWith "/" (ArrayNE.toArray t)
 
 instance eqTopic :: Eq Topic where
   eq = genericEq
@@ -98,7 +103,7 @@ instance decodeJsonTopic :: DecodeJson Topic where
       breaker = List.toUnfoldable <$> regex "[^\\/]*" `sepBy` char '/'
 
 instance encodeJsonTopic :: EncodeJson Topic where
-  encodeJson (Topic t) = encodeJson $ joinWith "/" $ ArrayNE.toArray t
+  encodeJson t = encodeJson (show t)
 
 
 
