@@ -3,7 +3,6 @@ module Main where
 import Prelude
 import Data.These (These (Both))
 import Data.Maybe (Maybe (..))
-import Data.Tuple (Tuple (..))
 import Data.Argonaut (class EncodeJson, class DecodeJson, encodeJson, decodeJson, fail)
 import Data.String.NonEmpty as StringNE
 import Data.String.Yarn (fromString)
@@ -15,7 +14,7 @@ import Effect.Ref as Ref
 import Effect.Console (log)
 import Partial.Unsafe (unsafePartial)
 
-import Sparrow.Client (Topic (..), Client, allocateDependencies, unpackClient)
+import Sparrow.Client (Client, allocateDependencies, unpackClient)
 
 
 data InitIn = InitIn
